@@ -1,74 +1,72 @@
-import { verifyKey } from 'discord-interactions';
+import { InteractionResponseType, InteractionType, verifyKey } from 'discord-interactions';
 import fetch from 'node-fetch';
 
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const PUBLIC_KEY = process.env.DISCORD_PUBLIC_KEY;
-
 export default async function handler(req, res) {
-  if (req.method === 'POST') {
-    // 1. Verificar firma de Discord
-    const signature = req.headers['x-signature-ed25519'];
-    const timestamp = req.headers['x-signature-timestamp'];
-    const body = JSON.stringify(req.body);
+  if (req.method !== 'POST') {
+    return res.status(405).send('Method Not Allowed');
+  }
 
-    const isValid = verifyKey(body, signature, timestamp, PUBLIC_KEY);
-    if (!isValid) {
-      return res.status(401).send('Bad request signature');
-    }
+  // Verificar firma de Discord
+  const signature = req.headers['x-signature-ed25519'];
+  const timestamp = req.headers['x-signature-timestamp'];
+  const rawBody = JSON.stringify(req.body);
 
-    // 2. Ping de Discord (tipo 1)
-    if (req.body.type === 1) {
-      return res.json({ type: 1 });
-    }
+  const isValid = verifyKey(
+    Buffer.from(rawBody),
+    signature,
+    timestamp,
+    process.env.DISCORD_PUBLIC_KEY
+  );
 
-    // 3. Comando slash
-    if (req.body.type === 2) {
-      const nombreBuscado = req.body.data.options[0].value.toLowerCase();
+  if (!isValid) {
+    return res.status(401).send('Bad request signature');
+  }
 
-      // Leer Google Sheets
-      const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:D?key=${GOOGLE_API_KEY}`;
-      const response = await fetch(url);
+  const interaction = req.body;
+
+  // Ping de Discord para validar endpoint
+  if (interaction.type === InteractionType.PING) {
+    return res.status(200).json({ type: InteractionResponseType.PONG });
+  }
+
+  // Comando /buscar
+  if (interaction.type === InteractionType.APPLICATION_COMMAND) {
+    const { name, options } = interaction.data;
+
+    if (name === 'buscar') {
+      const query = options[0].value.toLowerCase();
+
+      // Llamar a Google Sheets
+      const sheetURL = `https://sheets.googleapis.com/v4/spreadsheets/${process.env.SPREADSHEET_ID}/values/A:D?key=${process.env.GOOGLE_API_KEY}`;
+      const response = await fetch(sheetURL);
       const data = await response.json();
 
-      const filas = data.values || [];
-      let encontrado = null;
-
-      for (let i = 1; i < filas.length; i++) { // i=1 para saltar cabecera
-        const nombre = (filas[i][0] || "").toLowerCase();
-        if (nombre.startsWith(nombreBuscado)) {
-          encontrado = filas[i];
-          break;
-        }
-      }
-
-      if (!encontrado) {
-        return res.json({
-          type: 4,
-          data: { content: `No encontré ningún resultado para: ${nombreBuscado}` }
+      if (!data.values) {
+        return res.status(200).json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: 'No se pudo acceder a la hoja.' }
         });
       }
 
-      const texto = encontrado[1] || "Sin texto";
-      const datoExtra = encontrado[2] || "";
-      const imagenUrl = encontrado[3] || "";
+      const match = data.values.find(row => row[0]?.toLowerCase().startsWith(query));
 
-      // Responder con embed
-      return res.json({
-        type: 4,
+      if (!match) {
+        return res.status(200).json({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: { content: 'No encontré nada con ese nombre.' }
+        });
+      }
+
+      const [nombre, dato1, dato2, img] = match;
+
+      return res.status(200).json({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          embeds: [
-            {
-              title: encontrado[0],
-              description: `${texto}\n${datoExtra}`,
-              thumbnail: { url: imagenUrl },
-              color: 0x00AE86
-            }
-          ]
+          content: `**${nombre}**\nDato1: ${dato1}\nDato2: ${dato2}\n${img}`
         }
       });
     }
   }
 
-  res.status(404).send('Not found');
+  res.status(400).send('Unhandled interaction type');
 }
