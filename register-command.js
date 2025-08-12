@@ -5,13 +5,13 @@ const GUILD_ID = process.env.GUILD_ID;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
 const COMMAND = {
-  name: 'buscar',
-  description: 'Busca un nombre en la hoja de Google Sheets',
+  name: 'card',
+  description: 'Search for a card in Google Sheets',
   type: 1,
   options: [
     {
-      name: 'nombre',
-      description: 'Nombre a buscar',
+      name: 'cardName',
+      description: 'Card to search for',
       type: 3,
       required: true
     }
@@ -35,3 +35,4 @@ async function registerCommand() {
 }
 
 registerCommand().catch(console.error);
+
